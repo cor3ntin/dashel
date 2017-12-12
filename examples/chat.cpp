@@ -2,6 +2,10 @@
 #include <iostream>
 #include <cassert>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 using namespace std;
 using namespace Dashel;
 
@@ -106,7 +110,7 @@ protected:
 		else
 		{
 			string line = readLine(remoteStream);
-			cout << line;
+			cout << line << std::endl;
 			cout.flush();
 		}
 	}
@@ -126,7 +130,7 @@ int main(int argc, char* argv[])
 	try
 	{
 		if (argc > 2)
-		{
+		{	
 			ChatClient client(argv[1], argv[2]);
 			client.run();
 		}

@@ -402,16 +402,20 @@ namespace Dashel
 		StdinStream(const std::string& params) : Stream("stdin"), WaitableStream("stdin")
 		{ 
 			target.add(params.c_str());
+			
+			if (GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_PIPE )
+			{
+				hf  = GetStdHandle(STD_INPUT_HANDLE);
+			}
+			else
+			{
+				hf  = CreateFile("CONIN$",   GENERIC_READ , FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+				SetConsoleMode(hf, ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_ECHO_INPUT );
+			}
 
-			if((hf = GetStdHandle(STD_INPUT_HANDLE)) == INVALID_HANDLE_VALUE)
+			if(hf == INVALID_HANDLE_VALUE)
 				throw DashelException(DashelException::ConnectionFailed, GetLastError(), "Cannot open standard input.");
-
-			DWORD cm;
-			GetConsoleMode(hf, &cm);
-			cm &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
-			if(!SetConsoleMode(hf, cm))
-				throw DashelException(DashelException::ConnectionFailed, GetLastError(), "Cannot change standard input mode to immediate.");
-
+			
 			// Create events.
 			addEvent(EvPotentialData, hf);
 			hev = createEvent(EvData);
@@ -426,31 +430,49 @@ namespace Dashel
 		//! Callback when an event is notified, allowing the stream to rearm it.
 		/*! \param t Type of event.
 		*/
-		virtual void notifyEvent(Hub *srv, EvType& t) 
-		{ 
-			DWORD n = 0;
-			if(GetNumberOfConsoleInputEvents(hf, &n))
+		virtual void notifyEvent(Hub *, EvType& t)
+		{
+			if (GetFileType(hf) == FILE_TYPE_PIPE )
 			{
-				if(n > 0)
+				DWORD bytesAvailable(0);
+				if (PeekNamedPipe(hf, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0)
+					t = EvData;
+				else if (WaitForSingleObject(hf, 0) == WAIT_OBJECT_0 )
 				{
-					INPUT_RECORD ir;
-					PeekConsoleInput(hf, &ir, 1, &n);
-					if(ir.EventType != KEY_EVENT)
-						ReadConsoleInput(hf, &ir, 1, &n);
-					else
+					t = EvClosed;
+				}
+				
+			}
+			else
+			{
+				DWORD n = 0;
+				if(!GetNumberOfConsoleInputEvents(hf, &n))
+					return;
+				INPUT_RECORD ir;
+				DWORD read;
+				while(n > 0)
+				{
+					PeekConsoleInput(hf, &ir, 1, &read);
+					if(read != 1)
+						break;
+
+					if(ir.EventType == KEY_EVENT)
 					{
 						t = EvData;
+						break;
 					}
+					ReadConsoleInput(hf, &ir, 1, &read);
+					n--;
 				}
 			}
 		}
 
 		//! Cannot write to stdin.
-		virtual void write(const void *data, const size_t size)
-		{ 
+		virtual void write(const void *, const size_t)
+		{
 			throw DashelException(DashelException::InvalidOperation, GetLastError(), "Cannot write to standard input.", this);
 		}
-		
+
 		//! Cannot flush stdin.
 		virtual void flush() 
 		{ 
@@ -471,9 +493,18 @@ namespace Dashel
 			{
 				DWORD len = 0;
 				BOOL r;
+				
+				
+				if (GetFileType(hf) == FILE_TYPE_PIPE )
+				{
+					r = ReadFile(hf, ptr, left, &len, NULL);
+				}
+				else
+				{
+					r = ReadConsole(hf, ptr, left, &len, NULL);
+				}
 
-				// Blocking write.
-				if((r = ReadFile(hf, ptr, left, &len, NULL)) == 0)
+				if (!r)
 				{
 					fail(DashelException::IOError, GetLastError(), "Read error from standard input.");
 				}
